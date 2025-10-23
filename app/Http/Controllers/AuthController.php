@@ -26,7 +26,6 @@ class AuthController extends Controller
             'role' => 'in:user,admin',
             'phone_number' => 'nullable|string|max:20', // raw input (local or E.164)
             'country_code' => 'nullable|string|size:2', // optional ISO2 region for parsing (e.g. US, IQ)
-            'last_login_at' => 'nullable|date',
         ]);
 
         $profilePath = null;
@@ -57,6 +56,33 @@ class AuthController extends Controller
             }
         }
 
+        $existing = User::where('email', $validated['email'])
+            ->orWhere('username', $validated['username'])
+            ->when($normalizedPhone, function ($query) use ($normalizedPhone) {
+                $query->orWhere('phone_number', $normalizedPhone);
+            })
+            ->first();
+
+        if ($existing) {
+            $conflicts = [];
+
+            if (isset($validated['email']) && $existing->email === $validated['email']) {
+                $conflicts[] = 'email';
+            }
+            if (isset($validated['username']) && $existing->username === $validated['username']) {
+                $conflicts[] = 'username';
+            }
+            if ($normalizedPhone && $existing->phone_number === $normalizedPhone) {
+                $conflicts[] = 'phone_number';
+            }
+
+            return response()->json([
+                'message' => 'Conflict: one or more fields are already in use.',
+                'conflicts' => $conflicts,           // e.g. ['email', 'username']
+                'errors' => array_combine($conflicts, array_map(fn($f)=>["The $f is already taken."], $conflicts))
+            ], 409);
+        }
+
         $user = User::create([
             'username' => $validated['username'],
             'full_name' => $validated['full_name'],
@@ -67,7 +93,7 @@ class AuthController extends Controller
             'is_active' => $validated['is_active'] ?? true,
             'role' => $validated['role'],
             'phone_number' => $normalizedPhone,
-            'last_login_at' => now(),
+            'last_login_at' => null,
         ]);
 
         $token = $user->createToken('auth_token')->plainTextToken;
@@ -81,33 +107,64 @@ class AuthController extends Controller
     // LOGIN
     public function login(Request $request)
     {
-        $request->validate([
+        $validated = $request->validate([
             'login' => 'required|string', // accepts email, username or phone number
-            'password' => 'required',
+            'password' => 'required|string|min:6',
             'remember_me' => 'boolean',
         ]);
 
-        $login = $request->input('login');
+        $login = $validated['login'];
+        $password = $validated['password'];
+        $rememberMe = (bool) ($validated['remember_me'] ?? false);
 
-        $user = User::where('email', $login)
-            ->orWhere('username', $login)
-            ->orWhere('phone_number', $login)
-            ->first();
+        $loginKey = 'username';
+        $loginValue = $login;
 
-        if (!$user || !Hash::check($request->password, $user->password)) {
-            return response()->json([
-                'message' => 'The provided credentials are incorrect.'
-            ], 401);
+        // email
+        if (filter_var($login, FILTER_VALIDATE_EMAIL)) {
+            $loginKey = 'email';
+            $loginValue = strtolower($login);
+        } else {
+            // try parsing as phone with libphonenumber
+            try {
+                $phoneUtil = PhoneNumberUtil::getInstance();
+                // if user supplies +E.164 or international prefix parse with null,
+                // otherwise parse with null as well (libphonenumber will attempt best-effort)
+                $numberProto = $phoneUtil->parse($login, null);
+
+                if ($phoneUtil->isValidNumber($numberProto)) {
+                    $loginKey = 'phone_number';
+                    $loginValue = $phoneUtil->format($numberProto, PhoneNumberFormat::E164);
+                }
+                // if not valid, we leave loginKey as username
+            } catch (NumberParseException $e) {
+                // parsing failed — treat as username
+            }
         }
 
-        // optional: update last login timestamp
+        $user = User::where($loginKey, $loginValue)->first();
+
+        if (!$user || !Hash::check($password, $user->password)) {
+            return response()->json(['message' => 'The provided credentials are incorrect.'], 401);
+        }
+
+        // update last login server-side
         $user->update(['last_login_at' => now()]);
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        // create token and set expiry based on remember_me
+        $newToken = $user->createToken('auth_token'); // NewAccessToken
+        $plainText = $newToken->plainTextToken;
+
+        // modify underlying PersonalAccessToken model if available
+        if (! empty($newToken->accessToken)) {
+            $tokenModel = $newToken->accessToken;
+            $tokenModel->expires_at = $rememberMe ? now()->addDays(30) : now()->addDay();
+            $tokenModel->save();
+        }
 
         return response()->json([
             'user' => $user,
-            'token' => $token
+            'token' => $plainText,
         ]);
     }
 

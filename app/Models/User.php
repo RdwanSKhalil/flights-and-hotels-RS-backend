@@ -26,4 +26,10 @@ class User extends Authenticatable
     protected $hidden = [
         'password'
     ];
+
+    protected $casts = [
+        'is_active' => 'boolean',
+        'date_of_birth' => 'date',
+        'last_login_at' => 'datetime',
+    ];
 }
