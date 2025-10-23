@@ -67,7 +67,7 @@ class AuthController extends Controller
             'is_active' => $validated['is_active'] ?? true,
             'role' => $validated['role'],
             'phone_number' => $normalizedPhone,
-            'last_login_at' => $validated['last_login_at'],
+            'last_login_at' => now(),
         ]);
 
         $token = $user->createToken('auth_token')->plainTextToken;
