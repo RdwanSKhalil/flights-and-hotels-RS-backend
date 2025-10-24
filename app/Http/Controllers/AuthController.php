@@ -181,4 +181,23 @@ class AuthController extends Controller
     {
         return response()->json($request->user());
     }
+
+    public function test(Request $request)
+    {
+        try {
+            $users = User::select('id', 'username', 'email', 'created_at')
+                ->orderBy('id', 'desc')
+                ->take(10)
+                ->get();
+
+            return response()->json(['Example Users:' => $users,
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Failed to fetch test data',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
 }
