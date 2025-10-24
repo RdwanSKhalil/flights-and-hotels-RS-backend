@@ -19,8 +19,7 @@
         "fakerphp/faker": "^1.23",
         "laravel/pail": "^1.2.2",
         "laravel/sail": "^1.41",
-        "mockery/mockery": "^1.6",
-        "pestphp/pest-plugin-laravel": "^4.0"
+        "mockery/mockery": "^1.6"
     },
     "autoload": {
         "psr-4": {
